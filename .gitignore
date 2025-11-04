@@ -1,0 +1,21 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# macOS
+.DS_Store
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+
+# VS Code
+.vscode/
+.env
+
+# TensorFlow / Jupyter outputs
+.ipynb_checkpoints/

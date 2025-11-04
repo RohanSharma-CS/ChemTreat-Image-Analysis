@@ -25,7 +25,7 @@ video_folder = os.path.expanduser("~/Desktop/Capstone videos")
 # -----------------------------------------------------------------------------
 # These are tuned for your 854×480 video. Adjust slightly if needed.
 jars = [
-    (25, 90, 290, 340),    # Jar 1 - moved down, slightly shorter
+    (25, 90, 190, 340),    # Jar 1 - moved down, slightly shorter
     (235, 90, 190, 340),   # Jar 2 - same offset as Jar 1
     (440, 90, 180, 340),   # Jar 3 - narrowed on right side
     (635, 90, 180, 340)    # Jar 4 - shifted left, same height
