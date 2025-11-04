@@ -1,117 +1,90 @@
-import pathlib
-#import numpy as np
-import threading
-#import seaborn as sns
-#import matplotlib.pyplot as plt
 import os
-import time
+import cv2
+import numpy as np
 import tensorflow as tf
-from tensorflow.keras import models
-from utils.utils import FrameGenerator
-from Camera import run_camera
+from model import build_model
 
-"""
-This script is used to perform live predictions on a video stream using a pre-trained model.
-It captures video frames, processes them, and uses the model to predict the output.
-It also includes functions for calculating settling times, and plotting fitted curves.
-The script is designed to work with a specific video format and model architecture.
-"""
+# -----------------------------------------------------------------------------
+# 1️⃣ Load your TensorFlow model structure
+# -----------------------------------------------------------------------------
+print("Initializing model architecture...")
+model = build_model()
+print("✅ Model structure loaded successfully.")
 
-"""
-Activate camera recording for one minute and 10 seconds and save the video to a file.
-Run a modified version of FrameGenerator to process video frames
-Make a prediction using the pre-trained model
-Display the video as it's recorded, then display the prediction in a plot
-Let the camera continue while the prediction is made until it reaches a point defined as 90% settled using mean intensity.
-Stop the camera and compare the prediction to the actual data.
-Save the prediction to a file.
-"""
+# If you have trained weights, uncomment and update this path:
+# model.load_weights("/Users/rohans/Desktop/Capstone/ChemTreat-Image-Analysis/turbidity_model.h5")
+# print("✅ Trained weights loaded successfully.")
 
-def start_camera_thread(save_dir, quick_cut, find_time, csv_path, shared_data):
-    """
-    Starts the camera recording in a separate thread and returns the video filename after quick_cut.
-    """
-    video_filename = None
+# -----------------------------------------------------------------------------
+# 2️⃣ Path to your videos
+# -----------------------------------------------------------------------------
+video_folder = os.path.expanduser("~/Desktop/Capstone videos")
 
-    def camera_thread():
-        #nonlocal video_filename
-        run_camera(save_dir, quick_cut, find_time, csv_path, shared_data)
-
-    # Start the camera thread
-    thread = threading.Thread(target=camera_thread)
-    thread.start()
-
-    return thread
-
-model_path = "C:/Users/elika/Senior Design/Results/Clay_FeCl_Combined_model/"
-model = models.load_model(model_path + "model/video_model.keras")
-
-save_dir = "C:/Users/elika/Senior Design/Results/live_predict/2/"
-
-video_path = os.path.join(save_dir, "live_video.mp4")
-csv_path = os.path.join(save_dir, "settling_times.csv")
-
-shared_data = {
-    "video_filename": None,
-    "elapsed_time": None,
-    "prediction": None,
-    "video_ready_event": threading.Event(),
-    "thread_finished_event": threading.Event(),
-    "video_stopped": threading.Event(),
-    "video_restarted": threading.Event()
-}
-
-camera_thread = start_camera_thread(save_dir, 70, True, csv_path, shared_data)
+# -----------------------------------------------------------------------------
+# 3️⃣ Define static crop coordinates for the four jars (x, y, width, height)
+# -----------------------------------------------------------------------------
+# These are tuned for your 854×480 video. Adjust slightly if needed.
+jars = [
+    (25, 90, 290, 340),    # Jar 1 - moved down, slightly shorter
+    (235, 90, 190, 340),   # Jar 2 - same offset as Jar 1
+    (440, 90, 180, 340),   # Jar 3 - narrowed on right side
+    (635, 90, 180, 340)    # Jar 4 - shifted left, same height
+]
 
 
-while True:
-    # Wait for the video file to be ready
-    shared_data["video_ready_event"].wait()  # Block until the video file is ready
-    time.sleep(0.1)  # Give some time for the video file to be created
-    video_filename = shared_data["video_filename"]
-    print(f"Video saved to: {video_filename}")
+# -----------------------------------------------------------------------------
+# 4️⃣ Process each video
+# -----------------------------------------------------------------------------
+for file_name in os.listdir(video_folder):
+    if not file_name.lower().endswith(".mov"):
+        continue
 
-    n_frames = 20
-    batch_size = 1
+    video_path = os.path.join(video_folder, file_name)
+    print(f"\n🎥 Processing video: {file_name}")
 
-    output_signature = (tf.TensorSpec(shape = (None, None, None, 3), dtype = tf.float32), 
-                        tf.TensorSpec(shape = (), dtype = tf.int16))
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"⚠️ Could not open {file_name}")
+        continue
 
-
-    video_filename = pathlib.Path(video_filename)
-
-    print("Video filename as pathlib")
-
-    test_ds = tf.data.Dataset.from_generator(FrameGenerator(video_filename, n_frames), 
-                                            output_signature = output_signature)
-
-    print("test_ds created")
-
-    test_ds = test_ds.batch(batch_size)
-
-    print("test_ds batched")
-
-    prediction = model.predict(test_ds)
-
-    shared_data["prediction"] = prediction
-
-    print(f"Prediction: {prediction}")
-
-    shared_data["video_stopped"].wait()  # Wait for the video to be restarted
-
-    while not shared_data["video_restarted"].is_set():
-        if shared_data["thread_finished_event"].is_set():  # Block until the thread is finished
+    frame_count = 0
+    while True:
+        ret, frame = cap.read()
+        if not ret:
             break
-        time.sleep(0.1)  # Sleep for a short time to avoid busy waiting
-################################
+        frame_count += 1
 
+        overlay_frame = frame.copy()
 
-print('Thread Finished')
-elapsed_time = shared_data["elapsed_time"]
-print(f"Elapsed time: {elapsed_time}")
+        # ---------------------------------------------------------------------
+        # Predict turbidity for each jar
+        # ---------------------------------------------------------------------
+        for i, (x, y, w, h) in enumerate(jars):
+            jar_crop = frame[y:y+h, x:x+w]
+            jar_resized = cv2.resize(jar_crop, (224, 224))
+            jar_input = np.expand_dims(jar_resized / 255.0, axis=(0,1))  # shape (1,1,224,224,3)
 
-print(f"Predicted time: {prediction}")
-print(f"Actual time: {elapsed_time}")
+            prediction = model.predict(jar_input, verbose=0)
+            turbidity = float(prediction[0][0])
 
-camera_thread.join()  # Wait for the camera thread to finish
-print("Camera thread finished")
+            # Print in terminal
+            print(f"Frame {frame_count} | Jar {i+1}: {turbidity:.2f}")
+
+            # Overlay text on video
+            cv2.putText(overlay_frame, f"Jar {i+1}: {turbidity:.1f}",
+                        (x+30, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                        (0, 0, 255), 2, cv2.LINE_AA)
+
+            # Draw rectangle around jar
+            cv2.rectangle(overlay_frame, (x, y), (x+w, y+h), (0, 0, 255), 2)
+
+        # Display overlay (press 'q' to quit)
+        cv2.imshow("Multi-Jar Turbidity", overlay_frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    print(f"✅ Finished {file_name} ({frame_count} frames processed)")
+
+cv2.destroyAllWindows()
+print("\n🎉 All videos processed successfully!")
